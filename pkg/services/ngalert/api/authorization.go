@@ -246,14 +246,22 @@ func (api *API) authorize(method, path string) web.Handler {
 }
 
 // authorizeDatasourceAccessForRule checks that user has access to all data sources declared by the rule
-func authorizeDatasourceAccessForRule(rule *ngmodels.AlertRule, evaluator func(evaluator ac.Evaluator) bool) bool {
+func authorizeDatasourceAccessForRule(rule *ngmodels.AlertRule, evaluator func(evaluator ac.Evaluator) bool, ds datasourceExistFunc) bool {
 	for _, query := range rule.Data {
 		if query.QueryType == expr.DatasourceType || query.DatasourceUID == expr.DatasourceUID || query.
 			DatasourceUID == expr.
 			OldDatasourceUID {
 			continue
 		}
+		// ignore deleted data sources. If user tries to create a new rule with missing data source it will be stopped downstream
 		if !evaluator(ac.EvalPermission(datasources.ActionQuery, datasources.ScopeProvider.GetResourceScopeUID(query.DatasourceUID))) {
+			if ds != nil {
+				// if user does not have access to a data source, it may not exist. Return false if data source exists and user does not have access. Return true if data source does not exist
+				exists, err := ds(query.DatasourceUID)
+				if err == nil {
+					return !exists
+				}
+			}
 			return false
 		}
 	}
