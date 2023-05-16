@@ -17,6 +17,7 @@ import (
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
+	"github.com/grafana/grafana/pkg/services/datasources"
 	"github.com/grafana/grafana/pkg/services/folder"
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/services/ngalert/eval"
@@ -26,10 +27,11 @@ import (
 )
 
 type PrometheusSrv struct {
-	log     log.Logger
-	manager state.AlertInstanceManager
-	store   RuleStore
-	ac      accesscontrol.AccessControl
+	log             log.Logger
+	manager         state.AlertInstanceManager
+	store           RuleStore
+	ac              accesscontrol.AccessControl
+	datasourceCache datasources.CacheService
 }
 
 const queryIncludeInternalLabels = "includeInternalLabels"
@@ -239,7 +241,7 @@ func (srv PrometheusSrv) RouteGetRuleStatuses(c *contextmodel.ReqContext) respon
 			srv.log.Warn("query returned rules that belong to folder the user does not have access to. All rules that belong to that namespace will not be added to the response", "folder_uid", groupKey.NamespaceUID)
 			continue
 		}
-		if !authorizeAccessToRuleGroup(rules, hasAccess) {
+		if !authorizeAccessToRuleGroup(rules, hasAccess, datasourceExistsFunc(c, srv.datasourceCache)) {
 			continue
 		}
 		ruleGroup, totals := srv.toRuleGroup(groupKey, folder, rules, limitAlertsPerRule, withStatesFast, matchers, labelOptions)

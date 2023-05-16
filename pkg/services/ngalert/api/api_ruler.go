@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/prometheus/common/model"
 
 	"github.com/grafana/grafana/pkg/api/apierrors"
@@ -16,6 +17,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/dashboards"
+	"github.com/grafana/grafana/pkg/services/datasources"
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/services/ngalert/eval"
 	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
@@ -40,6 +42,7 @@ type RulerSrv struct {
 	cfg                *setting.UnifiedAlertingSettings
 	ac                 accesscontrol.AccessControl
 	conditionValidator ConditionValidator
+	datasourceCache    datasources.CacheService
 }
 
 var (
@@ -100,7 +103,7 @@ func (srv RulerSrv) RouteDeleteAlertRules(c *contextmodel.ReqContext, namespaceT
 		}
 		rulesToDelete := make([]string, 0, len(ruleList))
 		for groupKey, rules := range deletionCandidates {
-			if !authorizeAccessToRuleGroup(rules, hasAccess) {
+			if !authorizeAccessToRuleGroup(rules, hasAccess, datasourceExistsFunc(c, srv.datasourceCache)) {
 				unauthz = true
 				continue
 			}
@@ -179,7 +182,7 @@ func (srv RulerSrv) RouteGetNamespaceRulesConfig(c *contextmodel.ReqContext, nam
 	}
 
 	for groupName, rules := range ruleGroups {
-		if !authorizeAccessToRuleGroup(rules, hasAccess) {
+		if !authorizeAccessToRuleGroup(rules, hasAccess, datasourceExistsFunc(c, srv.datasourceCache)) {
 			continue
 		}
 		result[namespaceTitle] = append(result[namespaceTitle], toGettableRuleGroupConfig(groupName, rules, namespace.ID, provenanceRecords))
@@ -215,7 +218,7 @@ func (srv RulerSrv) RouteGetRulesGroupConfig(c *contextmodel.ReqContext, namespa
 		return ErrResp(http.StatusInternalServerError, err, "failed to get group alert rules")
 	}
 
-	if !authorizeAccessToRuleGroup(ruleList, hasAccess) {
+	if !authorizeAccessToRuleGroup(ruleList, hasAccess, datasourceExistsFunc(c, srv.datasourceCache)) {
 		return ErrResp(http.StatusUnauthorized, fmt.Errorf("%w to access the group because it does not have access to one or many data sources one or many rules in the group use", ErrAuthorization), "")
 	}
 
@@ -287,7 +290,7 @@ func (srv RulerSrv) RouteGetRulesConfig(c *contextmodel.ReqContext) response.Res
 			srv.log.Error("namespace not visible to the user", "user", c.SignedInUser.UserID, "namespace", groupKey.NamespaceUID)
 			continue
 		}
-		if !authorizeAccessToRuleGroup(rules, hasAccess) {
+		if !authorizeAccessToRuleGroup(rules, hasAccess, datasourceExistsFunc(c, srv.datasourceCache)) {
 			continue
 		}
 		namespace := folder.Title
@@ -338,7 +341,7 @@ func (srv RulerSrv) updateAlertRulesInGroup(c *contextmodel.ReqContext, groupKey
 		if !srv.ac.IsDisabled() {
 			err = authorizeRuleChanges(groupChanges, func(evaluator accesscontrol.Evaluator) bool {
 				return hasAccess(accesscontrol.ReqOrgAdminOrEditor, evaluator)
-			})
+			}, datasourceExistsFunc(c, srv.datasourceCache))
 			if err != nil {
 				return err
 			}

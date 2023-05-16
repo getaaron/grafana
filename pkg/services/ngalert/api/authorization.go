@@ -269,9 +269,9 @@ func authorizeDatasourceAccessForRule(rule *ngmodels.AlertRule, evaluator func(e
 }
 
 // authorizeAccessToRuleGroup checks all rules against authorizeDatasourceAccessForRule and exits on the first negative result
-func authorizeAccessToRuleGroup(rules []*ngmodels.AlertRule, evaluator func(evaluator ac.Evaluator) bool) bool {
+func authorizeAccessToRuleGroup(rules []*ngmodels.AlertRule, evaluator func(evaluator ac.Evaluator) bool, datasourceExists datasourceExistFunc) bool {
 	for _, rule := range rules {
-		if !authorizeDatasourceAccessForRule(rule, evaluator) {
+		if !authorizeDatasourceAccessForRule(rule, evaluator, datasourceExists) {
 			return false
 		}
 	}
@@ -282,12 +282,12 @@ func authorizeAccessToRuleGroup(rules []*ngmodels.AlertRule, evaluator func(eval
 // NOTE: if there are rules for deletion, and the user does not have access to data sources that a rule uses, the rule is removed from the list.
 // If the user is not authorized to perform the changes the function returns ErrAuthorization with a description of what action is not authorized.
 // Return changes that the user is authorized to perform or ErrAuthorization
-func authorizeRuleChanges(change *store.GroupDelta, evaluator func(evaluator ac.Evaluator) bool) error {
+func authorizeRuleChanges(change *store.GroupDelta, evaluator func(evaluator ac.Evaluator) bool, datasourceExists datasourceExistFunc) error {
 	namespaceScope := dashboards.ScopeFoldersProvider.GetResourceScopeUID(change.GroupKey.NamespaceUID)
 
 	rules, ok := change.AffectedGroups[change.GroupKey]
 	if ok { // not ok can be when user creates a new rule group or moves existing alerts to a new group
-		if !authorizeAccessToRuleGroup(rules, evaluator) { // if user is not authorized to do operation in the group that is being changed
+		if !authorizeAccessToRuleGroup(rules, evaluator, datasourceExists) { // if user is not authorized to do operation in the group that is being changed
 			return fmt.Errorf("%w to change group %s because it does not have access to one or many rules in this group", ErrAuthorization, change.GroupKey.RuleGroup)
 		}
 	} else if len(change.Delete) > 0 {
@@ -301,7 +301,7 @@ func authorizeRuleChanges(change *store.GroupDelta, evaluator func(evaluator ac.
 			return fmt.Errorf("%w to delete alert rules that belong to folder %s", ErrAuthorization, change.GroupKey.NamespaceUID)
 		}
 		for _, rule := range change.Delete {
-			if !authorizeDatasourceAccessForRule(rule, evaluator) {
+			if !authorizeDatasourceAccessForRule(rule, evaluator, datasourceExists) {
 				return fmt.Errorf("%w to delete an alert rule '%s' because the user does not have read permissions for one or many datasources the rule uses", ErrAuthorization, rule.UID)
 			}
 		}
@@ -315,7 +315,7 @@ func authorizeRuleChanges(change *store.GroupDelta, evaluator func(evaluator ac.
 			return fmt.Errorf("%w to create alert rules in the folder %s", ErrAuthorization, change.GroupKey.NamespaceUID)
 		}
 		for _, rule := range change.New {
-			dsAllowed := authorizeDatasourceAccessForRule(rule, evaluator)
+			dsAllowed := authorizeDatasourceAccessForRule(rule, evaluator, datasourceExists)
 			if !dsAllowed {
 				return fmt.Errorf("%w to create a new alert rule '%s' because the user does not have read permissions for one or many datasources the rule uses", ErrAuthorization, rule.Title)
 			}
@@ -323,7 +323,7 @@ func authorizeRuleChanges(change *store.GroupDelta, evaluator func(evaluator ac.
 	}
 
 	for _, rule := range change.Update {
-		dsAllowed := authorizeDatasourceAccessForRule(rule.New, evaluator)
+		dsAllowed := authorizeDatasourceAccessForRule(rule.New, evaluator, datasourceExists)
 		if !dsAllowed {
 			return fmt.Errorf("%w to update alert rule '%s' (UID: %s) because the user does not have read permissions for one or many datasources the rule uses", ErrAuthorization, rule.Existing.Title, rule.Existing.UID)
 		}
@@ -355,7 +355,7 @@ func authorizeRuleChanges(change *store.GroupDelta, evaluator func(evaluator ac.
 				// add a safeguard in the case of inconsistency. If user hit this then there is a bug in the calculating of changes struct
 				return fmt.Errorf("failed to authorize moving an alert rule %s between groups because unable to check access to group %s from which the rule is moved", rule.Existing.UID, rule.Existing.RuleGroup)
 			}
-			if !authorizeAccessToRuleGroup(rules, evaluator) {
+			if !authorizeAccessToRuleGroup(rules, evaluator, datasourceExists) {
 				return fmt.Errorf("%w to move rule %s between two different groups because user does not have access to the source group %s", ErrAuthorization, rule.Existing.UID, rule.Existing.RuleGroup)
 			}
 		}

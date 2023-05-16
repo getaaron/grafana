@@ -230,3 +230,12 @@ func containsProvisionedAlerts(provenances map[string]ngmodels.Provenance, rules
 	}
 	return false
 }
+
+type datasourceExistFunc func(uid string) (bool, error)
+
+func datasourceExistsFunc(c *contextmodel.ReqContext, cache datasources.CacheService) datasourceExistFunc {
+	return func(uid string) (bool, error) {
+		d, err := cache.GetDatasourceByUID(c.Req.Context(), uid, c.SignedInUser, false)
+		return d != nil, err
+	}
+}
