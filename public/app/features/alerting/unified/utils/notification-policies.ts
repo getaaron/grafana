@@ -1,12 +1,17 @@
-import { AlertmanagerGroup, Route, RouteWithID } from 'app/plugins/datasource/alertmanager/types';
+import { AlertmanagerGroup, ObjectMatcher, Route, RouteWithID } from 'app/plugins/datasource/alertmanager/types';
 
-import { Label, normalizeMatchers, labelsMatchObjectMatchers } from './matchers';
+import { Label, labelsMatchObjectMatchers, normalizeMatchers } from './matchers';
 
 // Match does a depth-first left-to-right search through the route tree
 // and returns the matching routing nodes.
-function findMatchingRoutes(root: Route, labels: Label[]): Route[] {
-  const matches: Route[] = [];
-
+function findMatchingRoutes<
+  TRoute extends {
+    object_matchers?: ObjectMatcher[];
+    routes?: TRoute[];
+    continue?: boolean;
+  }
+>(root: TRoute, labels: Label[]): TRoute[] {
+  const matches: TRoute[] = [];
   // If the current node is not a match, return nothing
   // const normalizedMatchers = normalizeMatchers(root);
   // Normalization should have happened earlier in the code
