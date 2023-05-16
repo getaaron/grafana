@@ -302,9 +302,7 @@ func (srv RulerSrv) RoutePostNameRulesConfig(c *contextmodel.ReqContext, ruleGro
 		return toNamespaceErrorResponse(err)
 	}
 
-	rules, err := validateRuleGroup(&ruleGroupConfig, c.SignedInUser.OrgID, namespace, func(condition ngmodels.Condition) error {
-		return srv.conditionValidator.Validate(eval.NewContext(c.Req.Context(), c.SignedInUser), condition)
-	}, srv.cfg)
+	rules, err := validateRuleGroup(&ruleGroupConfig, c.SignedInUser.OrgID, namespace, srv.cfg)
 	if err != nil {
 		return ErrResp(http.StatusBadRequest, err, "")
 	}
@@ -348,6 +346,23 @@ func (srv RulerSrv) updateAlertRulesInGroup(c *contextmodel.ReqContext, groupKey
 
 		if err := verifyProvisionedRulesNotAffected(c.Req.Context(), srv.provenanceStore, c.OrgID, groupChanges); err != nil {
 			return err
+		}
+
+		if len(groupChanges.New) > 0 {
+			for _, rule := range groupChanges.New {
+				err := srv.conditionValidator.Validate(eval.NewContext(c.Req.Context(), c.SignedInUser), rule.GetEvalCondition())
+				if err != nil {
+					return multierror.Append(ngmodels.ErrAlertRuleFailedValidation, err)
+				}
+			}
+		}
+		if len(groupChanges.Update) > 0 {
+			for _, upd := range groupChanges.Update {
+				err := srv.conditionValidator.Validate(eval.NewContext(c.Req.Context(), c.SignedInUser), upd.New.GetEvalCondition())
+				if err != nil {
+					return multierror.Append(fmt.Errorf("%w %s", ngmodels.ErrAlertRuleFailedValidation, upd.Existing.UID), err)
+				}
+			}
 		}
 
 		finalChanges = store.UpdateCalculatedRuleFields(groupChanges)
