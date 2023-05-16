@@ -19,7 +19,6 @@ func validateRuleNode(
 	interval time.Duration,
 	orgId int64,
 	namespace *folder.Folder,
-	conditionValidator func(ngmodels.Condition) error,
 	cfg *setting.UnifiedAlertingSettings) (*ngmodels.AlertRule, error) {
 	intervalSeconds, err := validateInterval(cfg, interval)
 	if err != nil {
@@ -74,18 +73,14 @@ func validateRuleNode(
 		} else {
 			return nil, fmt.Errorf("%w: no queries or expressions are found", ngmodels.ErrAlertRuleFailedValidation)
 		}
+	} else {
+		err = validateCondition(ruleNode.GrafanaManagedAlert.Condition, ruleNode.GrafanaManagedAlert.Data)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ngmodels.ErrAlertRuleFailedValidation, err.Error())
+		}
 	}
 
 	queries := AlertQueriesFromApiAlertQueries(ruleNode.GrafanaManagedAlert.Data)
-	if len(queries) != 0 {
-		cond := ngmodels.Condition{
-			Condition: ruleNode.GrafanaManagedAlert.Condition,
-			Data:      queries,
-		}
-		if err = conditionValidator(cond); err != nil {
-			return nil, fmt.Errorf("failed to validate condition of alert rule %s: %w", ruleNode.GrafanaManagedAlert.Title, err)
-		}
-	}
 
 	newAlertRule := ngmodels.AlertRule{
 		OrgID:           orgId,
@@ -115,6 +110,26 @@ func validateRuleNode(
 		}
 	}
 	return &newAlertRule, nil
+}
+
+func validateCondition(condition string, queries []apimodels.AlertQuery) error {
+	if condition == "" {
+		return errors.New("condition cannot be empty")
+	}
+	refIDs := make(map[string]int, len(queries))
+	for idx, query := range queries {
+		if query.RefID == "" {
+			return fmt.Errorf("refID is not specified for data query\\expression at index %d", idx)
+		}
+		if usedIdx, ok := refIDs[query.RefID]; ok {
+			return fmt.Errorf("refID '%s' is already used by query\\expression at index %d", usedIdx)
+		}
+		refIDs[query.RefID] = idx
+	}
+	if _, ok := refIDs[condition]; !ok {
+		return fmt.Errorf("condition '%s' is not found among queries\\expressions", condition)
+	}
+	return nil
 }
 
 func validateInterval(cfg *setting.UnifiedAlertingSettings, interval time.Duration) (int64, error) {
@@ -155,7 +170,6 @@ func validateRuleGroup(
 	ruleGroupConfig *apimodels.PostableRuleGroupConfig,
 	orgId int64,
 	namespace *folder.Folder,
-	conditionValidator func(ngmodels.Condition) error,
 	cfg *setting.UnifiedAlertingSettings) ([]*ngmodels.AlertRuleWithOptionals, error) {
 	if ruleGroupConfig.Name == "" {
 		return nil, errors.New("rule group name cannot be empty")
@@ -180,7 +194,7 @@ func validateRuleGroup(
 	result := make([]*ngmodels.AlertRuleWithOptionals, 0, len(ruleGroupConfig.Rules))
 	uids := make(map[string]int, cap(result))
 	for idx := range ruleGroupConfig.Rules {
-		rule, err := validateRuleNode(&ruleGroupConfig.Rules[idx], ruleGroupConfig.Name, interval, orgId, namespace, conditionValidator, cfg)
+		rule, err := validateRuleNode(&ruleGroupConfig.Rules[idx], ruleGroupConfig.Name, interval, orgId, namespace, cfg)
 		// TODO do not stop on the first failure but return all failures
 		if err != nil {
 			return nil, fmt.Errorf("invalid rule specification at index [%d]: %w", idx, err)
