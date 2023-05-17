@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/prometheus/common/model"
 
 	"github.com/grafana/grafana/pkg/api/apierrors"
@@ -24,6 +23,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/ngalert/provisioning"
 	"github.com/grafana/grafana/pkg/services/ngalert/store"
 	"github.com/grafana/grafana/pkg/services/quota"
+	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/util"
 )
@@ -347,25 +347,12 @@ func (srv RulerSrv) updateAlertRulesInGroup(c *contextmodel.ReqContext, groupKey
 			}
 		}
 
-		if err := verifyProvisionedRulesNotAffected(c.Req.Context(), srv.provenanceStore, c.OrgID, groupChanges); err != nil {
+		if err := validateQueries(c.Req.Context(), groupChanges, srv.conditionValidator, c.SignedInUser); err != nil {
 			return err
 		}
 
-		if len(groupChanges.New) > 0 {
-			for _, rule := range groupChanges.New {
-				err := srv.conditionValidator.Validate(eval.NewContext(c.Req.Context(), c.SignedInUser), rule.GetEvalCondition())
-				if err != nil {
-					return multierror.Append(ngmodels.ErrAlertRuleFailedValidation, err)
-				}
-			}
-		}
-		if len(groupChanges.Update) > 0 {
-			for _, upd := range groupChanges.Update {
-				err := srv.conditionValidator.Validate(eval.NewContext(c.Req.Context(), c.SignedInUser), upd.New.GetEvalCondition())
-				if err != nil {
-					return multierror.Append(fmt.Errorf("%w %s", ngmodels.ErrAlertRuleFailedValidation, upd.Existing.UID), err)
-				}
-			}
+		if err := verifyProvisionedRulesNotAffected(c.Req.Context(), srv.provenanceStore, c.OrgID, groupChanges); err != nil {
+			return err
 		}
 
 		finalChanges = store.UpdateCalculatedRuleFields(groupChanges)
@@ -524,4 +511,24 @@ func verifyProvisionedRulesNotAffected(ctx context.Context, provenanceStore prov
 		return nil
 	}
 	return fmt.Errorf("%w: alert rule group [%s]", errProvisionedResource, errorMsg.String())
+}
+
+func validateQueries(ctx context.Context, groupChanges *store.GroupDelta, validator ConditionValidator, user *user.SignedInUser) error {
+	if len(groupChanges.New) > 0 {
+		for _, rule := range groupChanges.New {
+			err := validator.Validate(eval.NewContext(ctx, user), rule.GetEvalCondition())
+			if err != nil {
+				return fmt.Errorf("%w: %s", ngmodels.ErrAlertRuleFailedValidation, err.Error())
+			}
+		}
+	}
+	if len(groupChanges.Update) > 0 {
+		for _, upd := range groupChanges.Update {
+			err := validator.Validate(eval.NewContext(ctx, user), upd.New.GetEvalCondition())
+			if err != nil {
+				return fmt.Errorf("%w %s: %s", ngmodels.ErrAlertRuleFailedValidation, upd.Existing.UID, err.Error())
+			}
+		}
+	}
+	return nil
 }
