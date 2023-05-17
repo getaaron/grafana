@@ -23,7 +23,7 @@ export function NameCell({ row: { original: data }, onFolderClick }: NameCellPro
       <>
         <Indent level={level} />
         <span className={styles.folderButtonSpacer} />
-        <em>Empty folder</em>
+        <em>{item.uiKind === 'empty-folder' ? 'Empty folder' : 'Loading...'}</em>
       </>
     );
   }
