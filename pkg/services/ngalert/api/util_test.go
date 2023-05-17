@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"math/rand"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +16,8 @@ import (
 	accesscontrolmock "github.com/grafana/grafana/pkg/services/accesscontrol/mock"
 	"github.com/grafana/grafana/pkg/services/auth"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
+	"github.com/grafana/grafana/pkg/services/datasources"
+	"github.com/grafana/grafana/pkg/services/ngalert/eval"
 	models2 "github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
@@ -179,3 +184,78 @@ func Test_containsProvisionedAlerts(t *testing.T) {
 		require.Falsef(t, containsProvisionedAlerts(provenance, rules), "the group of rules is not expected to be provisioned but it is. Provenances: %v", provenance)
 	})
 }
+
+type fakeCacheServiceWithHooks struct {
+	getByIdHook  func(datasourceID int64, user *user.SignedInUser) (*datasources.DataSource, error)
+	getByUidHook func(datasourceUID string, user *user.SignedInUser) (*datasources.DataSource, error)
+}
+
+func (f fakeCacheServiceWithHooks) GetDatasource(ctx context.Context, datasourceID int64, user *user.SignedInUser, skipCache bool) (*datasources.DataSource, error) {
+	if f.getByIdHook == nil {
+		return nil, datasources.ErrDataSourceNotFound
+	}
+	return f.getByIdHook(datasourceID, user)
+}
+
+func (f fakeCacheServiceWithHooks) GetDatasourceByUID(ctx context.Context, datasourceUID string, user *user.SignedInUser, skipCache bool) (*datasources.DataSource, error) {
+	if f.getByUidHook == nil {
+		return nil, datasources.ErrDataSourceNotFound
+	}
+	return f.getByUidHook(datasourceUID, user)
+}
+
+var _ datasources.CacheService = &fakeCacheServiceWithHooks{}
+
+func fakeGenCacheService() datasources.CacheService {
+	return &fakeCacheServiceWithHooks{
+		getByIdHook: func(datasourceID int64, user *user.SignedInUser) (*datasources.DataSource, error) {
+			orgId := int64(1)
+			if user != nil {
+				orgId = user.OrgID
+			}
+			return &datasources.DataSource{
+				ID:      datasourceID,
+				OrgID:   orgId,
+				Version: 1,
+				Name:    uuid.NewString(),
+				Type:    "testdata",
+				Access:  "proxy",
+				UID:     uuid.NewString(),
+				Created: time.Now(),
+				Updated: time.Now(),
+			}, nil
+		},
+		getByUidHook: func(datasourceUID string, user *user.SignedInUser) (*datasources.DataSource, error) {
+			orgId := int64(1)
+			if user != nil {
+				orgId = user.OrgID
+			}
+			return &datasources.DataSource{
+				ID:      1,
+				OrgID:   orgId,
+				Version: 1,
+				Name:    datasourceUID,
+				Type:    "testdata",
+				Access:  "proxy",
+				UID:     uuid.NewString(),
+				Created: time.Now(),
+				Updated: time.Now(),
+			}, nil
+		},
+	}
+}
+
+type recordingConditionValidator struct {
+	recorded []models2.Condition
+	hook     func(c models2.Condition) error
+}
+
+func (r recordingConditionValidator) Validate(_ eval.EvaluationContext, condition models2.Condition) error {
+	r.recorded = append(r.recorded, condition)
+	if r.hook != nil {
+		return r.hook(condition)
+	}
+	return nil
+}
+
+var _ ConditionValidator = &recordingConditionValidator{}

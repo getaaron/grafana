@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"math"
 	"math/rand"
 	"net/http"
@@ -360,6 +361,8 @@ func TestAuthorizeRuleChanges(t *testing.T) {
 		},
 	}
 
+	datasourceExistFn := func(uid string) (bool, error) { return true, nil }
+
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			groupChanges := testCase.changes()
@@ -374,7 +377,7 @@ func TestAuthorizeRuleChanges(t *testing.T) {
 						response := evaluator.Evaluate(missing)
 						executed = true
 						return response
-					})
+					}, datasourceExistFn)
 					require.Errorf(t, err, "expected error because less permissions than expected were provided. Provided: %v; Expected: %v", missing, permissions)
 					require.ErrorIs(t, err, ErrAuthorization)
 					require.Truef(t, executed, "evaluation function is expected to be called but it was not.")
@@ -388,7 +391,7 @@ func TestAuthorizeRuleChanges(t *testing.T) {
 				require.Truef(t, response, "provided permissions [%v] is not enough for requested permissions [%s]", permissions, evaluator.GoString())
 				executed = true
 				return true
-			})
+			}, datasourceExistFn)
 			require.NoError(t, err)
 			require.Truef(t, executed, "evaluation function is expected to be called but it was not.")
 		})
@@ -419,6 +422,10 @@ func TestCheckDatasourcePermissionsForRule(t *testing.T) {
 
 	rule.Data = data
 
+	var datasourceExist datasourceExistFunc = func(uid string) (bool, error) {
+		return true, nil
+	}
+
 	t.Run("should check only expressions", func(t *testing.T) {
 		permissions := map[string][]string{
 			datasources.ActionQuery: scopes,
@@ -431,7 +438,7 @@ func TestCheckDatasourcePermissionsForRule(t *testing.T) {
 			require.Truef(t, response, "provided permissions [%v] is not enough for requested permissions [%s]", permissions, evaluator.GoString())
 			executed++
 			return true
-		})
+		}, datasourceExist)
 
 		require.True(t, eval)
 		require.Equal(t, expectedExecutions, executed)
@@ -443,14 +450,46 @@ func TestCheckDatasourcePermissionsForRule(t *testing.T) {
 		eval := authorizeDatasourceAccessForRule(rule, func(evaluator ac.Evaluator) bool {
 			executed++
 			return false
-		})
+		}, datasourceExist)
 
 		require.False(t, eval)
 		require.Equal(t, 1, executed)
 	})
+
+	t.Run("should return true if no permissions and datasource does not exists", func(t *testing.T) {
+		executedExist := 0
+
+		eval := authorizeDatasourceAccessForRule(rule, func(evaluator ac.Evaluator) bool {
+			return false
+		}, func(uid string) (bool, error) {
+			executedExist++
+			return false, nil
+		})
+
+		require.True(t, eval)
+		require.Equal(t, 1, executedExist)
+	})
+
+	t.Run("should return false if no permissions and datasource exist function returns error", func(t *testing.T) {
+		executedExist := 0
+
+		eval := authorizeDatasourceAccessForRule(rule, func(evaluator ac.Evaluator) bool {
+			return false
+		}, func(uid string) (bool, error) {
+			executedExist++
+			return false, errors.New("error")
+		})
+
+		require.False(t, eval)
+		require.Equal(t, 1, executedExist)
+	})
 }
 
 func Test_authorizeAccessToRuleGroup(t *testing.T) {
+	var datasourceExist datasourceExistFunc = func(uid string) (bool, error) {
+		return true, nil
+	}
+
 	t.Run("should return true if user has access to all datasources of all rules in group", func(t *testing.T) {
 		rules := models.GenerateAlertRules(rand.Intn(4)+1, models.AlertRuleGen())
 		var scopes []string
@@ -467,10 +506,39 @@ func Test_authorizeAccessToRuleGroup(t *testing.T) {
 			response := evaluator.Evaluate(permissions)
 			require.Truef(t, response, "provided permissions [%v] is not enough for requested permissions [%s]", permissions, evaluator.GoString())
 			return true
-		})
+		}, datasourceExist)
 
 		require.True(t, result)
 	})
+
+	t.Run("should return true if user has access to all existing datasources of all rules in group", func(t *testing.T) {
+		rules := models.GenerateAlertRules(rand.Intn(4)+1, models.AlertRuleGen())
+		permissions := map[string][]string{
+			datasources.ActionQuery: getDatasourceScopesForRules(rules),
+		}
+
+		query := models.GenerateAlertQuery()
+		query.DatasourceUID = "does-not-exist"
+
+		oneDatasourceDoesNotExist := func(uid string) (bool, error) {
+			require.Equal(t, query.DatasourceUID, uid)
+			return false, nil
+		}
+
+		ruleWithMissingDatasource := models.AlertRuleGen(func(rule *models.AlertRule) {
+			rule.Data = []models.AlertQuery{
+				query,
+			}
+		})()
+		rules = append(rules, ruleWithMissingDatasource)
+
+		result := authorizeAccessToRuleGroup(rules, func(evaluator ac.Evaluator) bool {
+			return evaluator.Evaluate(permissions)
+		}, oneDatasourceDoesNotExist)
+
+		require.True(t, result)
+	})
+
 	t.Run("should return false if user does not have access to at least one rule in group", func(t *testing.T) {
 		rules := models.GenerateAlertRules(rand.Intn(4)+1, models.AlertRuleGen())
 		var scopes []string
@@ -489,7 +557,7 @@ func Test_authorizeAccessToRuleGroup(t *testing.T) {
 		result := authorizeAccessToRuleGroup(rules, func(evaluator ac.Evaluator) bool {
 			response := evaluator.Evaluate(permissions)
 			return response
-		})
+		}, datasourceExist)
 
 		require.False(t, result)
 	})

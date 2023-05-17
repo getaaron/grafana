@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -589,6 +590,71 @@ func TestVerifyProvisionedRulesNotAffected(t *testing.T) {
 	})
 }
 
+func TestValidateQueries(t *testing.T) {
+	delta := store.GroupDelta{
+		New: []*models.AlertRule{
+			models.AlertRuleGen(func(rule *models.AlertRule) {
+				rule.Condition = "New"
+			})(),
+		},
+		Update: []store.RuleDelta{
+			{
+				Existing: models.AlertRuleGen(func(rule *models.AlertRule) {
+					rule.Condition = "Update_Existing"
+				})(),
+				New: models.AlertRuleGen(func(rule *models.AlertRule) {
+					rule.Condition = "Update_New"
+				})(),
+				Diff: nil,
+			},
+		},
+		Delete: []*models.AlertRule{
+			models.AlertRuleGen(func(rule *models.AlertRule) {
+				rule.Condition = "Deleted"
+			})(),
+		},
+	}
+
+	t.Run("should validate New and Updated only", func(t *testing.T) {
+		validator := &recordingConditionValidator{}
+		err := validateQueries(context.Background(), &delta, validator, nil)
+		require.NoError(t, err)
+		for _, condition := range validator.recorded {
+			if condition.Condition == "New" || condition.Condition == "Update_New" {
+				continue
+			}
+			assert.Failf(t, "validated unexpected condition", "condition '%s' was validated but should not", condition.Condition)
+		}
+	})
+	t.Run("should return rule validate error if fails on new rule", func(t *testing.T) {
+		validator := &recordingConditionValidator{
+			hook: func(c models.Condition) error {
+				if c.Condition == "New" {
+					return errors.New("test")
+				}
+				return nil
+			},
+		}
+		err := validateQueries(context.Background(), &delta, validator, nil)
+		require.Error(t, err)
+		require.ErrorIs(t, err, models.ErrAlertRuleFailedValidation)
+	})
+	t.Run("should return rule validate error with UID if fails on updated rule", func(t *testing.T) {
+		validator := &recordingConditionValidator{
+			hook: func(c models.Condition) error {
+				if c.Condition == "Update_New" {
+					return errors.New("test")
+				}
+				return nil
+			},
+		}
+		err := validateQueries(context.Background(), &delta, validator, nil)
+		require.Error(t, err)
+		require.ErrorIs(t, err, models.ErrAlertRuleFailedValidation)
+		require.ErrorContains(t, err, delta.Update[0].Existing.UID)
+	})
+}
+
 func createServiceWithProvenanceStore(ac *acMock.Mock, store *fakes.RuleStore, provenanceStore provisioning.ProvisioningStore) *RulerSrv {
 	svc := createService(ac, store)
 	svc.provenanceStore = provenanceStore
@@ -604,6 +670,7 @@ func createService(ac *acMock.Mock, store *fakes.RuleStore) *RulerSrv {
 		log:             log.New("test"),
 		cfg:             nil,
 		ac:              ac,
+		datasourceCache: fakeGenCacheService(),
 	}
 }
 

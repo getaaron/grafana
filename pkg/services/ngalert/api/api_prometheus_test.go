@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/grafana/pkg/expr"
-
 	"github.com/grafana/grafana/pkg/infra/log"
 	acmock "github.com/grafana/grafana/pkg/services/accesscontrol/mock"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
@@ -495,10 +494,11 @@ func TestRouteGetRuleStatuses(t *testing.T) {
 			ruleStore.PutRule(context.Background(), rules...)
 
 			api := PrometheusSrv{
-				log:     log.NewNopLogger(),
-				manager: fakeAIM,
-				store:   ruleStore,
-				ac:      acmock.New().WithDisabled(),
+				log:             log.NewNopLogger(),
+				manager:         fakeAIM,
+				store:           ruleStore,
+				ac:              acmock.New().WithDisabled(),
+				datasourceCache: fakeGenCacheService(),
 			}
 
 			response := api.RouteGetRuleStatuses(c)
@@ -541,10 +541,11 @@ func TestRouteGetRuleStatuses(t *testing.T) {
 			acMock := acmock.New().WithPermissions(createPermissionsForRules(rules))
 
 			api := PrometheusSrv{
-				log:     log.NewNopLogger(),
-				manager: fakeAIM,
-				store:   ruleStore,
-				ac:      acMock,
+				log:             log.NewNopLogger(),
+				manager:         fakeAIM,
+				store:           ruleStore,
+				ac:              acMock,
+				datasourceCache: fakeGenCacheService(),
 			}
 
 			response := api.RouteGetRuleStatuses(c)
@@ -1252,10 +1253,11 @@ func setupAPI(t *testing.T) (*fakes.RuleStore, *fakeAlertInstanceManager, *acmoc
 	acMock := acmock.New().WithDisabled()
 
 	api := PrometheusSrv{
-		log:     log.NewNopLogger(),
-		manager: fakeAIM,
-		store:   fakeStore,
-		ac:      acMock,
+		log:             log.NewNopLogger(),
+		manager:         fakeAIM,
+		store:           fakeStore,
+		ac:              acMock,
+		datasourceCache: fakeGenCacheService(),
 	}
 
 	return fakeStore, fakeAIM, acMock, api
