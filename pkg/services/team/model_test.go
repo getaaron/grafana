@@ -25,25 +25,20 @@ func TestTeamConversion(t *testing.T) {
 
 	out, err := json.MarshalIndent(dst, "", "  ")
 	require.NoError(t, err)
-	//fmt.Printf("%s", string(out))
+	// fmt.Printf("%s", string(out))
 	require.JSONEq(t, `{
+		"apiVersion": "alphav1",
+		"kind": "Team",
 		"metadata": {
-		  "createdBy": "",
+		  "name": "abc",
 		  "creationTimestamp": "2000-01-01T08:00:00Z",
-		  "extraFields": null,
-		  "finalizers": null,
-		  "labels": null,
-		  "resourceVersion": "",
-		  "uid": "",
-		  "updateTimestamp": "2010-01-01T08:00:00Z",
-		  "updatedBy": ""
+		  "annotations": {
+			"updatedTimestamp": "2010-01-01T08:00:00Z"
+		  }
 		},
 		"spec": {
 		  "email": "team@a.org",
 		  "name": "TeamA"
-		},
-		"status": {
-		  "additionalFields": null
 		}
 	  }`, string(out))
 }

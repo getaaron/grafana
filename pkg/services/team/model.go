@@ -33,19 +33,12 @@ type Team struct {
 	Updated time.Time `json:"updated"`
 }
 
-func (t *Team) ToResource() team.Resource {
-	r := team.Resource{
-		Metadata: team.Metadata{
-			// TODO: OrgID >>> namespace
-			// TODO: UID >> name
-			CreationTimestamp: t.Created,
-			UpdateTimestamp:   t.Updated,
-		},
-		Spec: team.Spec{
-			Name: t.Name,
-		},
-	}
-
+func (t *Team) ToResource() team.K8sResource {
+	r := team.NewK8sResource(t.UID, &team.Spec{
+		Name: t.Name,
+	})
+	r.Metadata.CreationTimestamp = &t.Created
+	r.Metadata.SetUpdatedTimestamp(&t.Updated)
 	if t.Email != "" {
 		r.Spec.Email = &t.Email
 	}
