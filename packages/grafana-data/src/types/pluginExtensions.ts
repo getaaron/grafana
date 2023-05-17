@@ -102,6 +102,12 @@ export type PluginExtensionPanelContext = {
   data?: PanelData;
 };
 
+export type PluginExtensionDataSourceConfigContext<JsonData> = {
+  pluginId: string;
+  jsonData: JsonData;
+  setJsonData: (jsonData: JsonData) => void;
+};
+
 type Dashboard = {
   uid: string;
   title: string;
